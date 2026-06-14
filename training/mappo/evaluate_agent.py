@@ -62,6 +62,16 @@ BASELINE_PATHS = {
 }
 
 
+def _resolve_device(device_str: str) -> str:
+    """Use CPU when CUDA is requested but unavailable (common after Colab disconnect)."""
+    if device_str == "auto":
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    if device_str.startswith("cuda") and not torch.cuda.is_available():
+        print("[Eval] CUDA unavailable — falling back to CPU")
+        return "cpu"
+    return device_str
+
+
 def _load_baseline(name: str, agent_id: int):
     import importlib.util
     path = BASELINE_PATHS[name]
@@ -81,9 +91,10 @@ def _load_baseline(name: str, agent_id: int):
 class MAPPOEvalAgent:
     def __init__(self, ckpt_path: str, agent_id: int, device_str: str = "cpu"):
         self.agent_id = agent_id
+        device_str = _resolve_device(device_str)
         dev = torch.device(device_str)
         actor = CNNActor()
-        ckpt  = torch.load(ckpt_path, map_location=device_str, weights_only=False)
+        ckpt  = torch.load(ckpt_path, map_location="cpu", weights_only=False)
         state = ckpt.get("actor_state_dict", ckpt.get("model_state_dict", ckpt))
         actor.load_state_dict(state, strict=True)
         actor.eval()
@@ -227,6 +238,7 @@ def evaluate(
     update:         int   = 0,
     device_str:     str   = "cpu",
 ) -> dict[str, Any]:
+    device_str = _resolve_device(device_str)
     seeds = SEED_SUITES.get(seed_suite_id, SEED_SUITES[0])[:n_matches]
     if baseline_names is None:
         baseline_names = ["tactical", "genius", "smarter"]
@@ -367,7 +379,7 @@ def main() -> None:
     parser.add_argument("--save-gifs",       action="store_true")
     parser.add_argument("--log-dir",         type=str, default="logs/mappo")
     parser.add_argument("--update",          type=int, default=0)
-    parser.add_argument("--device",          type=str, default="cpu")
+    parser.add_argument("--device",          type=str, default="auto")
     args = parser.parse_args()
 
     evaluate(
