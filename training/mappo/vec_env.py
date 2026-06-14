@@ -80,6 +80,10 @@ def env_worker(remote: mp.connection.Connection, parent_remote: mp.connection.Co
                 prev_obs = obs
                 remote.send(obs)
 
+            elif cmd == "set_dense_coef":
+                rb.set_dense_reward_coef(float(data))
+                remote.send(True)
+
             elif cmd == "close":
                 remote.close()
                 break
@@ -131,6 +135,13 @@ class VecEnv:
     def reset_idx(self, idx: int, seed: int, ckpt_paths: list[str]) -> dict:
         self.remotes[idx].send(("reset", (seed, ckpt_paths)))
         return self.remotes[idx].recv()
+
+    def set_dense_reward_coef(self, coef: float) -> None:
+        """Push updated dense reward coefficient to all worker processes."""
+        for remote in self.remotes:
+            remote.send(("set_dense_coef", float(coef)))
+        for remote in self.remotes:
+            remote.recv()
 
     def close(self):
         for remote in self.remotes:

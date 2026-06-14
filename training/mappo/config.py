@@ -34,7 +34,16 @@ class MAPPOConfig:
     value_coef:      float = 1.0
 
     # ── reward ───────────────────────────────────────────────────────────────
-    dense_reward_coef: float = 1.0     # annealed to 0.1 in later phases
+    dense_reward_coef: float = 1.0     # used when dense_reward_anneal=False
+
+    # Piecewise dense-reward annealing (sparse terminal rewards unchanged):
+    #   first 40% → coef_early, next 40% → coef_mid, final 20% → coef_late
+    dense_reward_anneal:            bool  = True
+    dense_reward_coef_early:        float = 1.0
+    dense_reward_coef_mid:          float = 0.5
+    dense_reward_coef_late:         float = 0.2
+    dense_reward_anneal_mid_start:  float = 0.4   # fraction of total_env_steps
+    dense_reward_anneal_late_start: float = 0.8
 
     # ── model ────────────────────────────────────────────────────────────────
     n_spatial:         int   = 18

@@ -50,6 +50,7 @@ from training.mappo.ppo_update import ppo_update
 from training.mappo.league_manager import LeagueManager
 from training.mappo.logger import TrainingLogger
 from training.mappo.vec_env import VecEnv
+from training.mappo.reward_builder import compute_annealed_dense_coef
 
 
 def set_seed(seed: int) -> None:
@@ -95,6 +96,21 @@ def load_checkpoint(
     return ckpt
 
 
+def _resolve_dense_coef(cfg: MAPPOConfig, env_steps: int) -> tuple[float, str]:
+    """Current dense reward coefficient and annealing phase label."""
+    return compute_annealed_dense_coef(
+        env_steps,
+        cfg.total_env_steps,
+        enabled=cfg.dense_reward_anneal,
+        fixed_coef=cfg.dense_reward_coef,
+        coef_early=cfg.dense_reward_coef_early,
+        coef_mid=cfg.dense_reward_coef_mid,
+        coef_late=cfg.dense_reward_coef_late,
+        mid_start=cfg.dense_reward_anneal_mid_start,
+        late_start=cfg.dense_reward_anneal_late_start,
+    )
+
+
 # ── training loop ─────────────────────────────────────────────────────────────
 
 def train(cfg: MAPPOConfig, resume: str | None = None, use_safety: bool = True) -> None:
@@ -134,7 +150,8 @@ def train(cfg: MAPPOConfig, resume: str | None = None, use_safety: bool = True) 
 
     # ── environment pool ──────────────────────────────────────────────────────
     AGENT_ID = 0   # training seat; weights shared across all 4 seats
-    vec_env = VecEnv(cfg.num_envs, AGENT_ID, cfg.seed, cfg.max_steps, cfg.dense_reward_coef)
+    init_coef, init_phase = _resolve_dense_coef(cfg, env_steps)
+    vec_env = VecEnv(cfg.num_envs, AGENT_ID, cfg.seed, cfg.max_steps, init_coef)
     
     obs_list:  list[dict]  = []
     episode_returns: list[list[float]] = [[] for _ in range(cfg.num_envs)]
@@ -154,13 +171,20 @@ def train(cfg: MAPPOConfig, resume: str | None = None, use_safety: bool = True) 
     completed = 0
     actor.train(); critic.train()
 
-    print(f"[Train] phase={cfg.phase} device={device_str} envs={cfg.num_envs} total_steps={total:,}")
+    print(
+        f"[Train] phase={cfg.phase} device={device_str} envs={cfg.num_envs} "
+        f"total_steps={total:,} dense_anneal={cfg.dense_reward_anneal} "
+        f"dense_coef={init_coef} ({init_phase})"
+    )
 
     t_start = time.perf_counter()
     best_metric_value = float('-inf') if cfg.best_metric_mode == "max" else float('inf')
     numbered_checkpoints: list[Path] = []
 
     while env_steps < total:
+        dense_coef, anneal_phase = _resolve_dense_coef(cfg, env_steps)
+        vec_env.set_dense_reward_coef(dense_coef)
+
         # ── rollout collection ─────────────────────────────────────────────────
         for t in range(cfg.rollout_length):
             # ── 1. Batch observations ──
@@ -283,7 +307,8 @@ def train(cfg: MAPPOConfig, resume: str | None = None, use_safety: bool = True) 
             "fps":                 round(fps, 1),
             "mean_return":         round(mean_return, 4),
             "mean_episode_length": cfg.rollout_length,
-            "dense_reward_coef":   cfg.dense_reward_coef,
+            "dense_reward_coef":   round(dense_coef, 4),
+            "dense_reward_anneal_phase": anneal_phase,
             "actor_lr":            cfg.actor_lr,
             "critic_lr":           cfg.critic_lr,
             "checkpoint_path":     "",
@@ -367,7 +392,7 @@ def train(cfg: MAPPOConfig, resume: str | None = None, use_safety: bool = True) 
                 f"[{update:5d}] steps={env_steps:,} | fps={fps:.0f} | "
                 f"a_loss={metrics['actor_loss']:.3f} c_loss={metrics['critic_loss']:.3f} "
                 f"ent={metrics['entropy']:.3f} kl={metrics['approx_kl']:.4f} | "
-                f"ret={mean_return:.3f} | "
+                f"ret={mean_return:.3f} | dense={dense_coef:.2f}({anneal_phase}) | "
                 f"trk(step={log_row['tracker_mean_step']:.0f} "
                 f"boxes={log_row['tracker_mean_boxes']:.1f} "
                 f"items={log_row['tracker_mean_items']:.1f} "
@@ -396,6 +421,8 @@ def main() -> None:
     parser.add_argument("--save-match-logs", action="store_true")
     parser.add_argument("--save-gifs",    action="store_true")
     parser.add_argument("--seed",         type=int,   default=None)
+    parser.add_argument("--no-dense-anneal", action="store_true",
+                        help="Keep dense_reward_coef fixed (no annealing)")
     args = parser.parse_args()
 
     if args.config:
@@ -408,6 +435,7 @@ def main() -> None:
     if args.total_steps:  cfg.total_env_steps = args.total_steps
     if args.device:       cfg.device       = args.device
     if args.seed is not None: cfg.seed     = args.seed
+    if args.no_dense_anneal:  cfg.dense_reward_anneal = False
 
     train(cfg, resume=args.resume, use_safety=not args.no_safety)
 

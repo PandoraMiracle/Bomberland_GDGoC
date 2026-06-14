@@ -1,8 +1,20 @@
 """
 reward_builder.py — Dense + terminal reward shaping for MAPPO training.
 
-All reward values are configurable.  The dense component is scaled by
-`dense_reward_coef` which is annealed during training phases.
+Dense reward sources (all scaled by `dense_reward_coef` when annealing):
+  - kill                 (+0.25 per kill, via stats diff)
+  - destroy_box          (+0.02 per box destroyed)
+  - collect_item         (+0.06 per item picked up)
+  - place_useful_bomb    (+0.01 bomb near box/enemy)
+  - escape_danger        (+0.05 leaving blast zone)
+  - enter_danger         (-0.08 entering blast zone)
+  - bomb_no_escape       (-0.10 useless bomb placement)
+  - suicide_penalty      (-0.20 dying mid-episode)
+
+Sparse / terminal rewards (NEVER scaled by dense_reward_coef):
+  - rank_0_unique (+1.00), rank_0_shared (+0.70)
+  - rank_1 (+0.15), rank_2 (-0.20), rank_3 (-0.80)
+  Applied only in compute_terminal() and added at episode end in vec_env.
 """
 
 from __future__ import annotations
@@ -35,6 +47,44 @@ DENSE = {
     "bomb_no_escape":       -0.10,
     "suicide_penalty":      -0.20,   # extra on top of rank_3
 }
+
+
+def compute_annealed_dense_coef(
+    env_steps: int,
+    total_env_steps: int,
+    *,
+    enabled: bool = True,
+    fixed_coef: float = 1.0,
+    coef_early: float = 1.0,
+    coef_mid: float = 0.5,
+    coef_late: float = 0.2,
+    mid_start: float = 0.4,
+    late_start: float = 0.8,
+) -> tuple[float, str]:
+    """
+    Piecewise annealing schedule for dense reward scaling.
+
+    Default schedule (when enabled):
+      progress in [0,  40%) → coef_early (1.0)
+      progress in [40%, 80%) → coef_mid   (0.5)
+      progress in [80%, 100%] → coef_late  (0.2)
+
+    Returns (coefficient, phase_label) where phase_label is
+    "fixed" | "early" | "mid" | "late".
+    """
+    if not enabled:
+        return float(fixed_coef), "fixed"
+
+    total = max(int(total_env_steps), 1)
+    progress = min(max(int(env_steps) / total, 0.0), 1.0)
+    mid = float(mid_start)
+    late = float(late_start)
+
+    if progress < mid:
+        return float(coef_early), "early"
+    if progress < late:
+        return float(coef_mid), "mid"
+    return float(coef_late), "late"
 
 
 def _safe_players(obs: dict, n: int = 4) -> np.ndarray:
@@ -96,7 +146,11 @@ class RewardBuilder:
     """
 
     def __init__(self, dense_reward_coef: float = 1.0):
-        self.dense_reward_coef = dense_reward_coef
+        self.dense_reward_coef = float(dense_reward_coef)
+
+    def set_dense_reward_coef(self, coef: float) -> None:
+        """Update dense scaling; terminal rewards are unaffected."""
+        self.dense_reward_coef = float(coef)
 
     # ── terminal ──────────────────────────────────────────────────────────────
 
@@ -104,6 +158,8 @@ class RewardBuilder:
         """
         ranks: list of 4 ints (0 = best rank).
         Returns terminal reward for agent_id.
+
+        Not scaled by dense_reward_coef — ranking signal stays at full strength.
         """
         aid = int(agent_id)
         if aid >= len(ranks):
