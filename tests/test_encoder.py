@@ -2,7 +2,7 @@
 test_encoder.py — Tests for the MAPPO observation encoder.
 
 Covers:
-  - Output shapes (18, 13, 13) spatial + (22,) scalar
+  - Output shapes (18, 13, 13) spatial + (28,) scalar
   - Engine direction verification: our ACTION_DELTAS match game.py
   - Safe handling of empty bombs array
   - Seat-relative opponent encoding correctness
@@ -20,8 +20,10 @@ if str(ROOT) not in sys.path:
 
 from engine.game import BomberEnv
 from agent.mappo_agent.encoder import (
-    encode_obs, N_SPATIAL, N_SCALAR, GRID_H, GRID_W, ACTION_DELTAS
+    encode_obs, N_SPATIAL, N_SCALAR, SCALAR_IDX_LEGAL_START,
+    GRID_H, GRID_W, ACTION_DELTAS
 )
+from agent.mappo_agent.safety import legal_action_mask
 from agent.mappo_agent.tracker import AgentTracker
 
 
@@ -236,3 +238,28 @@ class TestTrackerIntegration:
         assert scalar[5] == 0.0  # est_items
         assert scalar[6] == 0.0  # est_bombs_pl
         assert scalar[7] == 0.0  # est_kills
+
+
+class TestLegalScalarFeatures:
+    def test_legal_slice_indices(self):
+        assert SCALAR_IDX_LEGAL_START == 22
+        assert N_SCALAR == SCALAR_IDX_LEGAL_START + 6
+
+    def test_stop_always_one(self, real_obs):
+        _, scalar = encode_obs(real_obs, agent_id=0)
+        assert scalar[22] == 1.0  # legal_stop
+
+    def test_matches_legal_action_mask(self, real_obs):
+        for aid in range(4):
+            _, scalar = encode_obs(real_obs, agent_id=aid)
+            expected = legal_action_mask(real_obs, aid).astype(np.float32)
+            np.testing.assert_array_equal(scalar[22:28], expected)
+
+    def test_dead_agent_only_stop_legal(self, real_obs):
+        obs = {k: v.copy() if hasattr(v, "copy") else v for k, v in real_obs.items()}
+        players = np.asarray(obs["players"], dtype=np.int32).copy()
+        players[0, 2] = 0
+        obs["players"] = players
+        _, scalar = encode_obs(obs, agent_id=0)
+        assert scalar[22] == 1.0
+        assert scalar[23:28].sum() == 0.0

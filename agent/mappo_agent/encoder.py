@@ -3,7 +3,7 @@ encoder.py — Observation encoder for MAPPO agent.
 
 Converts raw BomberEnv observation dict into:
   spatial : np.ndarray  shape (18, 13, 13)  float32
-  scalar  : np.ndarray  shape (22,)          float32
+  scalar  : np.ndarray  shape (28,)          float32
 
 Verified engine direction mappings (from engine/player.py, engine/game.py):
   Action 0  STOP       dx=0,  dy=0
@@ -22,9 +22,12 @@ from __future__ import annotations
 from collections import deque
 import numpy as np
 
+from agent.mappo_agent.safety import legal_action_mask
+
 # ── constants ────────────────────────────────────────────────────────────────
 N_SPATIAL   = 18
-N_SCALAR    = 22
+N_SCALAR    = 28
+SCALAR_IDX_LEGAL_START = 22   # legal_stop … legal_bomb (6 features)
 GRID_H      = 13
 GRID_W      = 13
 BOMB_TIMER_MAX   = 7
@@ -145,7 +148,8 @@ def encode_obs(obs: dict, agent_id: int, tracker=None) -> tuple[np.ndarray, np.n
     Returns
     -------
     spatial : float32 array (N_SPATIAL=18, GRID_H, GRID_W)
-    scalar  : float32 array (N_SCALAR=22,)
+    scalar  : float32 array (N_SCALAR=28,)
+      Indices 22–27: legal_stop, legal_left, legal_right, legal_up, legal_down, legal_bomb
     """
     grid    = _safe_grid(obs)
     players = _safe_players(obs)
@@ -264,7 +268,7 @@ def encode_obs(obs: dict, agent_id: int, tracker=None) -> tuple[np.ndarray, np.n
     spatial = np.stack(channels, axis=0).astype(np.float32)  # (18, H, W)
 
     # ────────────────────────────────────────────────────────────────────────
-    # SCALAR FEATURES (22)
+    # SCALAR FEATURES (28)
     # ────────────────────────────────────────────────────────────────────────
     # Pull from tracker if available, else use defaults
     est_step       = float(tracker.estimated_step)   if tracker else 0.0
@@ -308,6 +312,8 @@ def encode_obs(obs: dict, agent_id: int, tracker=None) -> tuple[np.ndarray, np.n
     if 0 <= last_action <= 5:
         last_action_oh[last_action] = 1.0
 
+    legal_feats = legal_action_mask(obs, aid).astype(np.float32)
+
     scalar = np.array([
         float(my_bombs_left)   / MAX_BOMBS_LEFT,   # 0
         float(my_radius)       / MAX_RADIUS,        # 1
@@ -326,6 +332,7 @@ def encode_obs(obs: dict, agent_id: int, tracker=None) -> tuple[np.ndarray, np.n
         idle_streak            / 10.0,              # 19
         opp1_alive,                                 # 20
         opp2_alive,                                 # 21
+        *legal_feats,                               # 22-27 legal mask
     ], dtype=np.float32)
 
     assert spatial.shape == (N_SPATIAL, GRID_H, GRID_W), f"spatial shape {spatial.shape}"

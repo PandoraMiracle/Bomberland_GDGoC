@@ -16,6 +16,7 @@ from agent.mappo_agent.model import (
     CNNActor, CentralizedCritic, ActorCritic,
     N_SPATIAL, N_SCALAR, N_ACTIONS, GRID_H, GRID_W
 )
+from training.mappo.critic_features import PRIVILEGED_SCALAR_DIM
 
 
 class TestCNNActor:
@@ -60,18 +61,18 @@ class TestCNNActor:
 class TestCentralizedCritic:
     @pytest.fixture
     def critic(self):
-        return CentralizedCritic(global_scalar_dim=32).eval()
+        return CentralizedCritic(global_scalar_dim=PRIVILEGED_SCALAR_DIM).eval()
 
     def test_output_shape(self, critic):
         sp = torch.zeros(1, N_SPATIAL, GRID_H, GRID_W)
-        sc = torch.zeros(1, 32)
+        sc = torch.zeros(1, PRIVILEGED_SCALAR_DIM)
         with torch.no_grad():
             val = critic(sp, sc)
         assert val.shape == (1, 1)
 
     def test_output_finite(self, critic):
         sp = torch.randn(4, N_SPATIAL, GRID_H, GRID_W)
-        sc = torch.randn(4, 32)
+        sc = torch.randn(4, PRIVILEGED_SCALAR_DIM)
         with torch.no_grad():
             val = critic(sp, sc)
         assert torch.all(torch.isfinite(val))
@@ -102,7 +103,7 @@ class TestActorCritic:
         sp = torch.zeros(B, N_SPATIAL, GRID_H, GRID_W)
         sc = torch.zeros(B, N_SCALAR)
         gsp = torch.zeros(B, N_SPATIAL, GRID_H, GRID_W)
-        gsc = torch.zeros(B, 32)
+        gsc = torch.zeros(B, PRIVILEGED_SCALAR_DIM)
         acts = torch.randint(0, 6, (B,))
         log_prob, entropy, value = ac.evaluate(sp, sc, gsp, gsc, acts)
         assert log_prob.shape == (B,)
@@ -113,8 +114,8 @@ class TestActorCritic:
         path = tmp_path / "test_ckpt.pth"
         torch.save({"actor_state_dict": ac.actor.state_dict()}, str(path))
         loaded = CNNActor()
-        ckpt = torch.load(str(path), map_location="cpu", weights_only=False)
-        loaded.load_state_dict(ckpt["actor_state_dict"])
+        from agent.mappo_agent.checkpoint_utils import load_actor_state_dict
+        load_actor_state_dict(loaded, str(path))
         loaded.eval()
         # Verify forward pass is identical
         sp = torch.randn(1, N_SPATIAL, GRID_H, GRID_W)

@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
 
 from engine.game import BomberEnv
 from agent.mappo_agent.agent import Agent
+from training.mappo.critic_features import PRIVILEGED_SCALAR_DIM
 
 
 class TestOneMatch:
@@ -69,7 +70,7 @@ class TestSmokePPO:
         ENT_COEF    = 0.01
         VF_COEF     = 0.5
         AGENT_ID    = 0
-        GLOBAL_SC   = 32
+        GLOBAL_SC   = PRIVILEGED_SCALAR_DIM
         DEVICE      = torch.device("cpu")
 
         ac = ActorCritic(global_scalar_dim=GLOBAL_SC).to(DEVICE)

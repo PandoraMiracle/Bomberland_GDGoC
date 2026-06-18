@@ -47,9 +47,9 @@ class MAPPOConfig:
 
     # ── model ────────────────────────────────────────────────────────────────
     n_spatial:         int   = 18
-    n_scalar:          int   = 22
+    n_scalar:          int   = 28
     n_actions:         int   = 6
-    global_scalar_dim: int   = 32
+    global_scalar_dim: int   = 64   # privileged critic vector (see critic_features.py)
 
     # ── training loop ────────────────────────────────────────────────────────
     total_env_steps:   int   = 20_000_000

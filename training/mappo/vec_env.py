@@ -19,6 +19,7 @@ import numpy as np
 from engine.game import BomberEnv
 from training.mappo.league_manager import LeagueManager
 from training.mappo.reward_builder import RewardBuilder
+from training.mappo.critic_features import enrich_obs_for_critic
 
 
 def env_worker(remote: mp.connection.Connection, parent_remote: mp.connection.Connection, 
@@ -68,8 +69,8 @@ def env_worker(remote: mp.connection.Connection, parent_remote: mp.connection.Co
                 else:
                     reward = dense_r
 
-                prev_obs = next_obs
-                remote.send((next_obs, float(reward), float(done)))
+                prev_obs = enrich_obs_for_critic(next_obs, env.current_step)
+                remote.send((prev_obs, float(reward), float(done)))
 
             elif cmd == "reset":
                 # data = (seed, ckpt_paths)
@@ -77,8 +78,8 @@ def env_worker(remote: mp.connection.Connection, parent_remote: mp.connection.Co
                 league._ckpt_paths = ckpt_paths
                 obs = env.reset(seed=seed_val)
                 opponents = league.sample_opponents(3, agent_id)
-                prev_obs = obs
-                remote.send(obs)
+                prev_obs = enrich_obs_for_critic(obs, env.current_step)
+                remote.send(prev_obs)
 
             elif cmd == "set_dense_coef":
                 rb.set_dense_reward_coef(float(data))

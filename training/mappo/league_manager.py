@@ -58,6 +58,7 @@ class _CheckpointAgent:
         import torch
         from agent.mappo_agent.model import CNNActor
         from agent.mappo_agent.encoder import encode_obs
+        from agent.mappo_agent.checkpoint_utils import load_actor_state_dict
         from agent.mappo_agent.tracker import AgentTracker
         from agent.mappo_agent.safety import apply_safety
 
@@ -69,8 +70,7 @@ class _CheckpointAgent:
 
         actor = CNNActor()
         ckpt  = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-        state = ckpt.get("actor_state_dict", ckpt.get("model_state_dict", ckpt))
-        actor.load_state_dict(state, strict=True)
+        load_actor_state_dict(actor, ckpt, map_location="cpu")
         actor.eval()
         self._actor  = actor
         self._device = torch.device("cpu")

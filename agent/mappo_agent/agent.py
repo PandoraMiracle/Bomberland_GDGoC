@@ -272,7 +272,7 @@ if _TORCH_AVAILABLE:
             return F.relu(x + r)
 
     class _CNNActor(nn.Module):
-        def __init__(self, n_spatial=18, n_scalar=22, n_actions=6):
+        def __init__(self, n_spatial=18, n_scalar=28, n_actions=6):
             super().__init__()
             self.cnn = nn.Sequential(
                 nn.Conv2d(n_spatial, 64, 3, padding=1), nn.ReLU(),
@@ -300,7 +300,7 @@ if _TORCH_AVAILABLE:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _encode_obs_submission(obs: dict, agent_id: int, tracker=None) -> tuple[np.ndarray, np.ndarray]:
-    """Inline encoder for submission. Returns (spatial (18,13,13), scalar (22,))."""
+    """Inline encoder for submission. Returns (spatial (18,13,13), scalar (28,))."""
     if _HAS_SHARED_MAPPO and _encode_obs_shared is not None:
         return _encode_obs_shared(obs, agent_id, tracker)
     GRASS, WALL, BOX, ITEM_R, ITEM_C = 0, 1, 2, 3, 4
@@ -419,6 +419,19 @@ def _encode_obs_submission(obs: dict, agent_id: int, tracker=None) -> tuple[np.n
     est_kills   = float(tracker.kills)           if tracker else 0.0
     idle_streak = float(tracker.idle_streak)     if tracker else 0.0
 
+    legal = np.zeros(6, dtype=np.float32)
+    legal[0] = 1.0
+    if my_alive:
+        for a, (dx, dy) in ((1, (-1, 0)), (2, (1, 0)), (3, (0, -1)), (4, (0, 1))):
+            nx, ny = my_row + dx, my_col + dy
+            if not (0 < nx < H - 1 and 0 < ny < W - 1):
+                continue
+            if int(grid[nx, ny]) in (WALL, BOX) or (nx, ny) in bomb_pos_set:
+                continue
+            legal[a] = 1.0
+        if my_bombs_left > 0 and (my_row, my_col) not in bomb_pos_set:
+            legal[5] = 1.0
+
     scalar = np.array([
         float(my_bombs_left)/5.0, float(my_radius)/5.0,
         est_step/500.0, float(alive_opp)/3.0,
@@ -427,6 +440,7 @@ def _encode_obs_submission(obs: dict, agent_id: int, tracker=None) -> tuple[np.n
         on_d1, on_d2, can_pl,
         1.0, 1.0,  # dist_item, dist_enemy (normalized max = unknown w/o BFS)
         idle_streak/10.0, opp1, opp2,
+        *legal,
     ], dtype=np.float32)
 
     return spatial, scalar
@@ -513,7 +527,7 @@ class Agent:
 
     # Model config — must match training
     _N_SPATIAL  = 18
-    _N_SCALAR   = 22
+    _N_SCALAR   = 28
     _N_ACTIONS  = 6
     _MODEL_FILE = "model.pth"   # expected next to agent.py in submission zip
 
@@ -541,9 +555,12 @@ class Agent:
         try:
             actor = _CNNActor(self._N_SPATIAL, self._N_SCALAR, self._N_ACTIONS)
             ckpt  = torch.load(str(model_path), map_location="cpu", weights_only=False)
-            # Support checkpoints saved as full ActorCritic or actor-only
-            state = ckpt.get("actor_state_dict", ckpt.get("model_state_dict", ckpt))
-            actor.load_state_dict(state, strict=True)
+            if _HAS_SHARED_MAPPO:
+                from agent.mappo_agent.checkpoint_utils import load_actor_state_dict
+                load_actor_state_dict(actor, ckpt, map_location="cpu")
+            else:
+                state = ckpt.get("actor_state_dict", ckpt.get("model_state_dict", ckpt))
+                actor.load_state_dict(state, strict=True)
             actor.eval()
             self._model = actor
             self._use_fallback = False
@@ -564,7 +581,7 @@ class Agent:
             self._tracker.sync_before_act(obs, self._last_action)
         spatial, scalar = _encode_obs_submission(obs, self.agent_id, self._tracker)
         sp_t  = torch.from_numpy(spatial).unsqueeze(0)   # (1, 18, 13, 13)
-        sc_t  = torch.from_numpy(scalar).unsqueeze(0)    # (1, 22)
+        sc_t  = torch.from_numpy(scalar).unsqueeze(0)    # (1, 28)
 
         with torch.inference_mode():
             logits = self._model(sp_t, sc_t)              # (1, 6)

@@ -42,7 +42,8 @@ from engine.game import BomberEnv
 from agent.mappo_agent.model import CNNActor, CentralizedCritic
 from agent.mappo_agent.encoder import encode_obs
 from agent.mappo_agent.tracker import AgentTracker
-from agent.mappo_agent.safety import apply_safety, legal_action_mask, get_safe_mask
+from agent.mappo_agent.checkpoint_utils import load_actor_state_dict
+from agent.mappo_agent.safety import apply_safety, get_safe_mask
 
 from training.mappo.config import MAPPOConfig
 from training.mappo.rollout_buffer import RolloutBuffer
@@ -51,6 +52,7 @@ from training.mappo.league_manager import LeagueManager
 from training.mappo.logger import TrainingLogger
 from training.mappo.vec_env import VecEnv
 from training.mappo.reward_builder import compute_annealed_dense_coef
+from training.mappo.critic_features import build_privileged_critic_scalar
 
 
 def set_seed(seed: int) -> None:
@@ -61,27 +63,9 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def make_global_scalar(obs: dict, n_players: int = 4) -> np.ndarray:
-    """
-    Build a fixed-dim (32,) global scalar for the centralized critic.
-    Encodes all 4 players' stats + step + bomb count.
-    """
-    vec = np.zeros(32, dtype=np.float32)
-    players = np.asarray(obs.get("players", np.zeros((4,5))), dtype=np.int32)
-    bombs   = obs.get("bombs")
-    n_bombs = 0 if (bombs is None or np.asarray(bombs).size == 0) else np.asarray(bombs).shape[0]
-
-    for i in range(min(4, players.shape[0])):
-        base = i * 5
-        vec[base]     = float(players[i, 2])           # alive
-        vec[base + 1] = float(players[i, 3]) / 5.0    # bombs_left
-        vec[base + 2] = float(1 + players[i, 4]) / 5.0  # radius
-        vec[base + 3] = float(players[i, 0]) / 12.0   # row
-        vec[base + 4] = float(players[i, 1]) / 12.0   # col
-    # slot 20: n_bombs / 10
-    vec[20] = float(n_bombs) / 10.0
-    # slots 21-31: reserved / zeros
-    return vec
+def make_global_scalar(obs: dict, agent_id: int = 0) -> np.ndarray:
+    """Privileged critic state (training only — not used by actor)."""
+    return build_privileged_critic_scalar(obs, agent_id=agent_id)
 
 
 def load_checkpoint(
@@ -91,7 +75,7 @@ def load_checkpoint(
     device:  str = "cpu",
 ) -> dict:
     ckpt = torch.load(path, map_location=device, weights_only=False)
-    actor.load_state_dict(ckpt.get("actor_state_dict", ckpt), strict=True)
+    load_actor_state_dict(actor, ckpt, map_location=device)
     critic.load_state_dict(ckpt.get("critic_state_dict", {}), strict=False)
     return ckpt
 
@@ -192,7 +176,7 @@ def train(cfg: MAPPOConfig, resume: str | None = None, use_safety: bool = True) 
             for e_i in range(cfg.num_envs):
                 obs   = obs_list[e_i]
                 sp, sc = encode_obs(obs, AGENT_ID, trackers[e_i])
-                gsc    = make_global_scalar(obs)
+                gsc    = make_global_scalar(obs, AGENT_ID)
 
                 sp_list.append(sp)
                 sc_list.append(sc)
@@ -265,7 +249,7 @@ def train(cfg: MAPPOConfig, resume: str | None = None, use_safety: bool = True) 
         sp_last_list, gsc_last_list = [], []
         for e_i in range(cfg.num_envs):
             sp, _ = encode_obs(obs_list[e_i], AGENT_ID, trackers[e_i])
-            gsc = make_global_scalar(obs_list[e_i])
+            gsc = make_global_scalar(obs_list[e_i], AGENT_ID)
             sp_last_list.append(sp)
             gsc_last_list.append(gsc)
 

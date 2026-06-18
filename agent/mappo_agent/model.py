@@ -5,12 +5,12 @@ Architecture (Actor):
   Conv(18→64, 3×3, pad=1) → ReLU
   ResBlock(64) × 2
   Conv(64→96, 3×3, pad=1) → ReLU → GlobalAvgPool  → (96,)
-  ScalarMLP: 22 → 64 → 64
+  ScalarMLP: 28 → 64 → 64
   FusionMLP: 160 → 128 → 64 → PolicyHead: 64 → 6 logits
 
 Architecture (CentralizedCritic):
   Same CNN trunk on global spatial (18, 13, 13)
-  GlobalScalarMLP: global_scalar_dim → 128 → 64
+  GlobalScalarMLP: global_scalar_dim (64) → 128 → 64
   FusionMLP: 160 → 128 → 1 value scalar
 
 Both networks use LayerNorm instead of BatchNorm to be stable with
@@ -24,7 +24,7 @@ import torch.nn.functional as F
 
 # Input dimensions (must match encoder.py)
 N_SPATIAL    = 18
-N_SCALAR     = 22
+N_SCALAR     = 28
 N_ACTIONS    = 6
 GRID_H       = 13
 GRID_W       = 13
@@ -141,7 +141,11 @@ class CentralizedCritic(nn.Module):
 
     Inputs:
         global_spatial : (B, 18, 13, 13) — same channels as actor (full obs)
-        global_scalar  : (B, global_scalar_dim)
+        global_scalar  : (B, global_scalar_dim)  default 64 — privileged (training only)
+
+    The actor never receives global_scalar. Spatial input remains the ego-centric
+    encode_obs() tensor; privilege is in the scalar vector (true step, all-player
+    stats, tie-break margins, bomb/map aggregates).
 
     Output:
         value : (B, 1)
@@ -150,7 +154,7 @@ class CentralizedCritic(nn.Module):
     def __init__(
         self,
         n_spatial:           int = N_SPATIAL,
-        global_scalar_dim:   int = 32,
+        global_scalar_dim:   int = 64,
     ):
         super().__init__()
         self.cnn_trunk = CNNTrunk(n_spatial)     # → (B, 96)
@@ -206,7 +210,7 @@ class ActorCritic(nn.Module):
         n_spatial:         int = N_SPATIAL,
         n_scalar:          int = N_SCALAR,
         n_actions:         int = N_ACTIONS,
-        global_scalar_dim: int = 32,
+        global_scalar_dim: int = 64,
     ):
         super().__init__()
         self.actor  = CNNActor(n_spatial, n_scalar, n_actions)
