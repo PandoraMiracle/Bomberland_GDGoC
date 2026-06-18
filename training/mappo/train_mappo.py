@@ -97,7 +97,7 @@ def _resolve_dense_coef(cfg: MAPPOConfig, env_steps: int) -> tuple[float, str]:
 
 # ── training loop ─────────────────────────────────────────────────────────────
 
-def train(cfg: MAPPOConfig, resume: str | None = None, use_safety: bool = True) -> None:
+def train(cfg: MAPPOConfig, resume: str | None = None, use_safety: bool = True, reset_steps: bool = False) -> None:
     device_str = cfg.resolve_device()
     device     = torch.device(device_str)
 
@@ -115,9 +115,13 @@ def train(cfg: MAPPOConfig, resume: str | None = None, use_safety: bool = True) 
 
     if resume:
         ckpt = load_checkpoint(actor, critic, resume, device_str)
-        start_update = int(ckpt.get("update", 0))
-        env_steps    = int(ckpt.get("env_steps", 0))
-        print(f"[Resume] update={start_update}, env_steps={env_steps}")
+        if not reset_steps:
+            start_update = int(ckpt.get("update", 0))
+            env_steps    = int(ckpt.get("env_steps", 0))
+        else:
+            start_update = 0
+            env_steps    = 0
+        print(f"[Resume] update={start_update}, env_steps={env_steps} (reset_steps={reset_steps})")
 
     # ── league + logger ───────────────────────────────────────────────────────
     league  = LeagueManager(cfg.league_baseline_frac, cfg.league_ckpt_frac, cfg.seed)
@@ -168,6 +172,7 @@ def train(cfg: MAPPOConfig, resume: str | None = None, use_safety: bool = True) 
     while env_steps < total:
         dense_coef, anneal_phase = _resolve_dense_coef(cfg, env_steps)
         vec_env.set_dense_reward_coef(dense_coef)
+        update_episode_returns = []
 
         # ── rollout collection ─────────────────────────────────────────────────
         for t in range(cfg.rollout_length):
@@ -239,6 +244,7 @@ def train(cfg: MAPPOConfig, resume: str | None = None, use_safety: bool = True) 
                     obs_list[e_i]       = new_obs
                     trackers[e_i].reset()
                     completed += 1
+                    update_episode_returns.append(sum(episode_returns[e_i]))
                     episode_returns[e_i] = []
                     episode_lens[e_i]    = 0
                 else:
@@ -282,14 +288,27 @@ def train(cfg: MAPPOConfig, resume: str | None = None, use_safety: bool = True) 
         all_returns = [r for ep in episode_returns for r in ep]
         mean_return = float(np.mean(all_returns)) if all_returns else 0.0
 
+        raw_rewards = buffer.rewards
+        ep_ret_mean = float(np.mean(update_episode_returns)) if update_episode_returns else 0.0
+        ep_ret_min = float(np.min(update_episode_returns)) if update_episode_returns else 0.0
+        ep_ret_max = float(np.max(update_episode_returns)) if update_episode_returns else 0.0
+
         tracker_snapshots = [t.stats_dict() for t in trackers]
         log_row = {
             **metrics,
             "update":              update,
             "env_steps":           env_steps,
             "episodes_completed":  completed,
+            "completed_episodes_this_update": len(update_episode_returns),
             "fps":                 round(fps, 1),
-            "mean_return":         round(mean_return, 4),
+            "mean_return":         round(mean_return, 6),
+            "raw_reward_mean":     round(float(raw_rewards.mean()), 6),
+            "raw_reward_sum":      round(float(raw_rewards.sum()), 6),
+            "raw_reward_min":      round(float(raw_rewards.min()), 6),
+            "raw_reward_max":      round(float(raw_rewards.max()), 6),
+            "episode_return_mean": round(ep_ret_mean, 6),
+            "episode_return_min":  round(ep_ret_min, 6),
+            "episode_return_max":  round(ep_ret_max, 6),
             "mean_episode_length": cfg.rollout_length,
             "dense_reward_coef":   round(dense_coef, 4),
             "dense_reward_anneal_phase": anneal_phase,
@@ -376,7 +395,8 @@ def train(cfg: MAPPOConfig, resume: str | None = None, use_safety: bool = True) 
                 f"[{update:5d}] steps={env_steps:,} | fps={fps:.0f} | "
                 f"a_loss={metrics['actor_loss']:.3f} c_loss={metrics['critic_loss']:.3f} "
                 f"ent={metrics['entropy']:.3f} kl={metrics['approx_kl']:.4f} | "
-                f"ret={mean_return:.3f} | dense={dense_coef:.2f}({anneal_phase}) | "
+                f"ret={mean_return:.6f} raw_r={float(raw_rewards.mean()):.6f} ep_ret={ep_ret_mean:.3f} | "
+                f"adv_norm={metrics['advantage_norm_mean']:.6f} | "
                 f"trk(step={log_row['tracker_mean_step']:.0f} "
                 f"boxes={log_row['tracker_mean_boxes']:.1f} "
                 f"items={log_row['tracker_mean_items']:.1f} "
@@ -407,6 +427,8 @@ def main() -> None:
     parser.add_argument("--seed",         type=int,   default=None)
     parser.add_argument("--no-dense-anneal", action="store_true",
                         help="Keep dense_reward_coef fixed (no annealing)")
+    parser.add_argument("--reset-steps",  action="store_true",
+                        help="Reset update and env_steps to 0 when resuming from a checkpoint")
     args = parser.parse_args()
 
     if args.config:
@@ -421,7 +443,7 @@ def main() -> None:
     if args.seed is not None: cfg.seed     = args.seed
     if args.no_dense_anneal:  cfg.dense_reward_anneal = False
 
-    train(cfg, resume=args.resume, use_safety=not args.no_safety)
+    train(cfg, resume=args.resume, use_safety=not args.no_safety, reset_steps=args.reset_steps)
 
 
 if __name__ == "__main__":
