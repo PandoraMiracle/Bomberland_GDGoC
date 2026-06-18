@@ -22,15 +22,15 @@ class MAPPOConfig:
     gae_lambda:      float = 0.95
     clip_eps:        float = 0.15
     ppo_epochs:      int   = 4
-    mini_batch_size: int   = 256        # samples per mini-batch during update
+    mini_batch_size: int   = 512        # samples per mini-batch during update
 
     # ── optimiser ────────────────────────────────────────────────────────────
-    actor_lr:        float = 3e-4
-    critic_lr:       float = 5e-4
+    actor_lr:        float = 1e-4
+    critic_lr:       float = 3e-4
     max_grad_norm:   float = 0.5
 
     # ── loss coefficients ────────────────────────────────────────────────────
-    entropy_coef:    float = 0.01
+    entropy_coef:    float = 0.02
     value_coef:      float = 1.0
 
     # ── reward ───────────────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ class MAPPOConfig:
     global_scalar_dim: int   = 32
 
     # ── training loop ────────────────────────────────────────────────────────
-    total_env_steps:   int   = 20_000_000
+    total_env_steps:   int   = 4_000_000
     checkpoint_every:  int   = 100       # updates between checkpoints
     eval_every:        int   = 200       # updates between evaluations
     eval_matches:      int   = 50

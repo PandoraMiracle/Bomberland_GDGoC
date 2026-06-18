@@ -48,9 +48,15 @@ def ppo_update(
     returns = torch.from_numpy(flat_data["returns"]).to(dev)
     masks   = torch.from_numpy(flat_data["action_masks"]).to(dev)
 
-    # Normalise advantages
+    # Compute advantage stats before normalize
     adv = torch.from_numpy(flat_data["advantages"]).to(dev)
+    adv_mean = adv.mean().item()
+    adv_std = adv.std().item()
+
+    # Normalise advantages
     adv = (adv - adv.mean()) / (adv.std() + 1e-8)
+    adv_norm_mean = adv.mean().item()
+    adv_norm_std = adv.std().item()
 
     B = sp.shape[0]
 
@@ -128,4 +134,14 @@ def ppo_update(
         "approx_kl":         total_kl          / n,
         "clip_fraction":     total_clip_frac   / n,
         "explained_variance": ev,
+        "advantage_mean":    adv_mean,
+        "advantage_std":     adv_std,
+        "advantage_norm_mean": adv_norm_mean,
+        "advantage_norm_std":  adv_norm_std,
+        "return_mean":       float(np.mean(flat_data["returns"])),
+        "return_std":        float(np.std(flat_data["returns"])),
+        "return_min":        float(np.min(flat_data["returns"])),
+        "return_max":        float(np.max(flat_data["returns"])),
+        "value_mean":        float(np.mean(flat_data["values"])),
+        "value_std":         float(np.std(flat_data["values"])),
     }
